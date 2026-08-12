@@ -1,0 +1,12 @@
+{
+  "model_name": "Qwen/Qwen3-8B",
+  "gpu": "H100-80GB",
+  "prefill_tokens_per_sec": 15000,
+  "decode_base_step_ms": 9.8,
+  "decode_per_seq_step_ms": 0.124,
+  "max_num_seqs": 256,
+  "kv_cache_tokens": 396000,
+  "max_queue_depth": 512,
+  "chars_per_token": 3.8,
+  "dataset_path": "data/dataset.json"
+}
