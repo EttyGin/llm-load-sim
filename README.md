@@ -26,9 +26,7 @@ curl -s localhost:8000/generate -H 'content-type: application/json' \
 ```
 
 `/metrics` is Prometheus text, `/health` a probe, `/v1/models` OpenAI-compatible
-discovery; `scripts/demo.py` tours the behaviour, driving the engine directly. Run
-one process only — `uvicorn --workers` gives each worker its own KV pool and its
-own idea of occupancy.
+discovery; `scripts/demo.py` tours the behaviour, driving the engine directly.
 
 ## Timing model
 
@@ -39,11 +37,8 @@ prefill = prompt_tokens / prefill_tokens_per_sec
 step_ms = decode_base_step_ms + decode_per_seq_step_ms × running
 ```
 
-Prefill is compute-bound, linear in prompt tokens. Decode is
-memory-bandwidth-bound: every step streams the full weight tensor out of HBM, and
-that one read serves the whole batch, so the base cost is shared, not per request.
-What throughput gains the user pays for — the marginal sequence adds its own KV
-read to everyone else's step, so all resident requests slow together.
+Prefill is compute-bound, linear in prompt tokens. 
+Decode is limited by memory, not compute: each step reads the model's weights once, and that single read serves every sequence in the batch — so the base cost is shared, not paid per request.
 
 | constant | value | derivation |
 | --- | --- | --- |
