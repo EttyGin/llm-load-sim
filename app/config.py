@@ -1,4 +1,5 @@
-"""Hardware and model physics for the simulated server; derivations in the README."""
+"""Hardware and model physics for the simulated server: realistic, conservative
+values for this hardware rather than derived ones. Disagree with one and re-run."""
 
 from __future__ import annotations
 
@@ -17,19 +18,20 @@ class Config(BaseModel):
     model_name: str
     gpu: str
 
-    # ~16 GFLOPs/token for an 8B model, H100 bf16 at ~40% MFU.
+    # Sustained prefill rate for an 8B model on one H100.
     prefill_tokens_per_sec: float = Field(gt=0)
-    # ~16GB of weights from HBM at 3.35 TB/s is ~4.8ms; ~2x that with kernel overhead.
+    # One decode step with a single sequence resident.
     decode_base_step_ms: float = Field(gt=0)
-    # Per-sequence KV read on top of the shared weight read.
+    # What each further resident sequence adds to that step.
     decode_per_seq_step_ms: float = Field(ge=0)
 
     max_num_seqs: int = Field(gt=0)  # vLLM's default decode-batch cap
-    # (80GB - 16GB weights - ~4GB overhead) / 128KB per token under GQA.
+    # Tokens the pool holds once weights and working memory are off the top, at
+    # vLLM's gpu_memory_utilization=0.90 default rather than the whole card.
     kv_cache_tokens: int = Field(gt=0)
     max_queue_depth: int = Field(gt=0)
 
-    chars_per_token: float = Field(gt=0)  # English prose, Llama-3 tokenizer
+    chars_per_token: float = Field(gt=0)  # characters per token, Qwen3's tokenizer
     dataset_path: str
 
 

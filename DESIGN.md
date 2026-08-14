@@ -1,9 +1,9 @@
 # Self-hosted inference: system design
 
-Memo to the AI Platforms team. Section 1 of 3.
+Memo to the AI Platforms team. Sections 1 and 2 of 3.
 
 Every figure below comes from `config.json`, `data/dataset.json`, or a
-`scripts/demo.py` run in this repo; anything that does not is labelled an
+`demo.py` run in this repo; anything that does not is labelled an
 assumption.
 
 ## 1. Proposed architecture
@@ -25,7 +25,10 @@ request costs 0.153 GPU-seconds, of which 0.098 is prefill and 0.055 is decode.
 That ratio drives the rest of this section: our bottleneck is prompt processing,
 not generation, because prompts run 4.5× longer than completions. If the real mix
 skews shorter, prefill's share falls and the fleet with it: prompts 30% shorter put
-the same arithmetic at 20.3 GPUs, four nodes rather than five.
+the same arithmetic at 20.3 GPUs, four nodes rather than five. `prefill_tokens_per_sec`
+is likewise the most sensitive input to the total — 16 of the 25.46 GPUs ride on
+it — and so the first constant to measure on real hardware; 20% optimistic costs
+us a sixth node.
 
 The decode rate is derived rather than measured. The pool holds
 `396000 / 1792 = 221` average sequences, below the 256-sequence cap, so KV binds
@@ -44,9 +47,9 @@ p99 headroom first, then rolling deploys, then node maintenance. Pulling a node
 leaves 32 GPUs against a 25.46 requirement — 80% utilisation, degraded but
 serving, without a capacity re-plan.
 
-Qwen3-8B is a capacity decision as much as a quality one. At bf16 its weights are
-15.3 GiB (README's provenance derivation), so one model plus the 396,000-token KV
-pool fits inside a single 80 GB H100 with no tensor parallelism. The scaling unit
+Qwen3-8B is a capacity decision as much as a quality one. The model and a
+396,000-token KV pool fit inside one 80 GB H100 with no tensor parallelism, which
+is what `config.json`'s pool size already assumes. The scaling unit
 is therefore one replica per
 GPU: 40 independent replicas, no collectives on the request path, no NVLink
 dependency between them, and a failed card costs 1/40 of capacity — 2.5%, drained
@@ -64,9 +67,9 @@ decisions.
 
 Round-robin is the wrong default here, and our own numbers say so. Scenario 1, one
 request at a time on an otherwise idle engine: a 68-token prompt with an 89-token
-completion finishes in 892ms; a 175-token prompt with a 1966-token completion
-takes 22.9s. Same engine, no contention, **26× apart** — and TTFT spreads
-similarly, 5.9ms against 405ms for a 6048-token prompt. Round-robin equalises
+completion finishes in 893ms; a 175-token prompt with a 1966-token completion
+takes 19.8s. Same engine, no contention, **22× apart** — and TTFT spreads
+similarly, 5.7ms against 404ms for a 6048-token prompt. Round-robin equalises
 request counts, which is not the quantity that matters: a replica that draws a few
 long completions saturates while its neighbour idles, and nothing in the request
 says which it will be. We should route on queue depth or least outstanding
@@ -100,7 +103,7 @@ number this repo produced rather than from a list of things that can go wrong.
 Prefill is 64% of the fleet by section 1's split, and on real vLLM it costs more
 than its share. Without chunked prefill the scheduler runs a prefill to completion
 before the next decode step, so every sequence resident on that replica stops for
-its duration. Scenario 1 measures a 6048-token prompt at 405ms of prefill on an
+its duration. Scenario 1 measures a 6048-token prompt at 404ms of prefill on an
 idle engine; against the 37.2ms step time at N=221 that is roughly eleven decode
 steps, and at scenario 3's peak of 253 resident sequences it is eleven tokens that
 252 other users do not receive. Our simulator does not model this — prefill and
@@ -120,7 +123,7 @@ bounds.
 
 ### Autoscaling cannot be reactive
 
-A new replica loads 15.3 GiB of weights and captures CUDA graphs before it serves
+A new replica loads the model weights and captures CUDA graphs before it serves
 a token. Assumption, flagged: one to two minutes to ready, since nothing in this
 repo measures pod startup. Scenario 3 says what happens meanwhile — at 400
 concurrent, p95 queue_wait is 8.35s. The spike arrives, queues and drains well
@@ -142,8 +145,8 @@ binds at 103 of 256 sequences; at 900k the sequence cap binds at 256 with the po
 half empty, 448631 of 900000; at our configured 396k we reach 253 of 256 with the
 pool at 100% — three sequences short of where the two constraints swap. At this
 workload's 1792-token mean they all but coincide, which is why neither knob does
-anything on its own: tripling the pool to 900k moved median e2e from 11.01s to
-10.78s, inside run-to-run noise, because the cap took over the instant the pool
+much on its own: tripling the pool to 900k bought three more sequences and 2% of
+median e2e, 11.00s to 10.78s, because the cap took over the instant the pool
 stopped binding. Raising `max_num_seqs` at 396k would be the same non-event in the
 other direction.
 
@@ -157,11 +160,12 @@ section 1, and it decides which constraint we would be tuning against.
 ### Degradation starts before queueing does
 
 Scenario 3 from 50 to 150 concurrent: p95 queue_wait stays at 0.00s — nothing ever
-waits — while median e2e rises 3.33s to 5.49s, 65% worse against an empty queue.
+waits — while median e2e rises 3.33s to 5.48s, 65% worse against an empty queue.
 The mechanism is in `config.json` rather than in the queue: step time is
 9.8 + 0.124 × running, so 16.0ms at 50 resident against 28.4ms at 150, a 1.78×
 slowdown applied to every sequence and needing no contention for admission at all.
-We can breach an SLO at a third of the pool's capacity with nothing queued.
+We can breach an SLO at 150 concurrent — 59% of the sequence cap, 65% of the KV
+pool — with nothing queued.
 
 Queue depth is therefore a saturation alarm, not an early warning, and the SLO has
 to sit on latency percentiles. Capacity planning should follow: section 1's 70% is

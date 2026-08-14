@@ -1,11 +1,12 @@
 """A guided tour of the simulator's behaviour, driving the engine directly.
 
-Usage: uv run python scripts/demo.py
+Usage: uv run python demo.py
 """
 
 import asyncio
 import random
 import statistics
+import time
 
 from app.config import load_config
 from app.dataset import load_dataset
@@ -27,10 +28,23 @@ def med_p95(values):
     return statistics.median(values), values[min(len(values) - 1, int(0.95 * len(values)))]
 
 
+async def drain(engine, timeout=5.0):
+    # Cancellation is not instant: a cancelled generate holds its slot and its KV
+    # reservation until the finally block runs. Scenarios share an event loop, so
+    # measuring the next one before this one lets go biases it.
+    deadline = time.monotonic() + timeout
+    while (engine.running or engine.kv_used) and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+    assert engine.running == 0 and engine.kv_used == 0, (
+        f"engine did not drain: {engine.running} running, {engine.kv_used} kv tokens held"
+    )
+
+
 async def run_load(config, records, n):
     engine = Engine(config)
     picks = random.Random(SEED).choices(records, k=n)
     results = await asyncio.gather(*(engine.generate(r) for r in picks))
+    await drain(engine)
     return engine, results
 
 
@@ -98,6 +112,7 @@ async def scenario_2(config, records):
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    await drain(engine)
 
     print(f"\n  record {target.id}: {target.prompt_tokens} prompt tokens,"
           f" {target.completion_tokens} completion tokens")

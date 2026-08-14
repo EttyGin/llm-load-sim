@@ -38,7 +38,7 @@ def load_dataset(path: str | Path, chars_per_token: float) -> Dataset:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise FileNotFoundError(
-            f"dataset not found: {path} (generate it with scripts/build_dataset.py)"
+            f"dataset not found: {path} (it ships with the repo; check dataset_path)"
         ) from exc
 
     records: dict[int, DatasetRecord] = {}
